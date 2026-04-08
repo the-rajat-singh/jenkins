@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick-Task App</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; padding: 50px; background: #f4f7f6; }
+        .container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 300px; }
+        h2 { margin-top: 0; color: #333; }
+        input { width: 80%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        button { padding: 8px; cursor: pointer; background: #2ea44f; color: white; border: none; border-radius: 4px; }
+        ul { list-style: none; padding: 0; margin-top: 20px; }
+        li { background: #fff; border-bottom: 1px solid #eee; padding: 10px 0; display: flex; justify-content: space-between; }
+        .done { text-decoration: line-through; color: gray; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>My Tasks</h2>
+    <input type="text" id="taskInput" placeholder="New task...">
+    <button onclick="addTask()">Add</button>
+    <ul id="taskList"></ul>
+</div>
+
+<script>
+    function addTask() {
+        const input = document.getElementById('taskInput');
+        if (!input.value) return;
+
+        const li = document.createElement('li');
+        li.innerHTML = `
+            <span onclick="this.classList.toggle('done')">${input.value}</span>
+            <button onclick="this.parentElement.remove()" style="background:#cf222e; font-size:10px;">Del</button>
+        `;
+        
+        document.getElementById('taskList').appendChild(li);
+        input.value = '';
+    }
+</script>
+
+</body>
+</html>
