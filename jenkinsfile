@@ -1,60 +1,81 @@
 pipeline {
-    agent any
-    
+    agent none
     environment {
-        DOCKER_IMAGE = "therajatsingh/quick-task-app"
-        DOCKER_REGISTRY = "docker.io"
-        DEPLOY_SERVER = "13.126.58.170"
-        DEPLOY_USER = "ubuntu"
+        IMAGE = "therajatsingh/quick-task-app"
+        TAG = "${BUILD_NUMBER}"
+        AWS_DEFAULT_REGION = "ap-south-1"
     }
-    
     stages {
         stage('Checkout') {
+            agent { label 'linux-agent' }
             steps {
                 checkout scm
             }
         }
         
         stage('Build Docker Image') {
+            agent { label 'linux-agent' }
             steps {
-                script {
-                    sh '''
-                        docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
-                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
-                    '''
-                }
+                sh '''
+                    docker build -t $IMAGE:$TAG .
+                    docker tag $IMAGE:$TAG $IMAGE:latest
+                '''
             }
         }
         
         stage('Login & Push (AWS SM - Secure)') {
+            agent { label 'linux-agent' }
             steps {
-                script {
-                    sh '''
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
-                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                        docker push ${DOCKER_IMAGE}:latest
-                        docker logout
-                    '''
-                }
+                sh '''
+                    set +x
+                    
+                    # Get secret from AWS Secrets Manager
+                    SECRET=$(aws secretsmanager get-secret-value \
+                        --secret-id dockerhub-creds \
+                        --region ap-south-1 \
+                        --query SecretString \
+                        --output text)
+                    
+                    # Extract username and password
+                    DOCKER_USER=$(echo $SECRET | jq -r '.Username')
+                    DOCKER_PASS=$(echo $SECRET | jq -r '.Password')
+                    
+                    # Debug: Check if variables are set (remove after testing)
+                    if [ -z "$DOCKER_USER" ] || [ -z "$DOCKER_PASS" ]; then
+                        echo "ERROR: Failed to retrieve credentials from AWS Secrets Manager"
+                        echo "Secret retrieved: $SECRET"
+                        exit 1
+                    fi
+                    
+                    # Login and push
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                    
+                    set -x
+                    docker push $IMAGE:$TAG
+                    docker push $IMAGE:latest
+                    docker logout
+                    set +x
+                    
+                    # Clear sensitive data
+                    unset SECRET
+                    unset DOCKER_USER
+                    unset DOCKER_PASS
+                '''
             }
         }
         
         stage('Deploy to Server') {
+            agent { label 'linux' }
             steps {
-                sshagent(['ubuntu']) {
-                    sh '''
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} << 'EOFSH'
-                            docker pull ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                            docker stop quick-task-app || true
-                            docker rm quick-task-app || true
-                            docker run -d \
-                                --name quick-task-app \
-                                -p 80:80 \
-                                -p 443:443 \
-                                ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                            docker ps | grep quick-task-app || (echo "Container failed to start" && exit 1)
-                        EOFSH
-                    '''
+                sshagent(['ssh-new-key']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ubuntu@13.126.58.170 << 'EOF'
+                        docker pull ${IMAGE}:${TAG}
+                        docker stop task-app || true
+                        docker rm task-app || true
+                        docker run -d -p 80:80 --name task-app ${IMAGE}:${TAG}
+                        EOF
+                    """
                 }
             }
         }
@@ -62,15 +83,10 @@ pipeline {
     
     post {
         success {
-            echo "✅ Pipeline executed successfully!"
-            echo "Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}"
-            echo "Deployed to: ${DEPLOY_USER}@${DEPLOY_SERVER}"
+            echo "✅ Pipeline Success! Image pushed: ${IMAGE}:${TAG}"
         }
         failure {
-            echo "❌ Pipeline failed! Check logs above for details"
-        }
-        always {
-            cleanWs()
+            echo "❌ Pipeline failed! Check logs above"
         }
     }
 }
