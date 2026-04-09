@@ -1,76 +1,87 @@
+// Fixed Jenkinsfile with proper Docker image references
+
 pipeline {
-    agent none
-
+    agent any
+    
     environment {
-        IMAGE = "therajatsingh/quick-task-app"
-        TAG = "${BUILD_NUMBER}"
-        AWS_DEFAULT_REGION = "ap-south-1"
+        DOCKER_IMAGE = "therajatsingh/quick-task-app"
+        DOCKER_REGISTRY = "docker.io"
+        AWS_REGION = "ap-south-1"
+        DEPLOY_SERVER = "13.126.58.170"
+        DEPLOY_USER = "ubuntu"
     }
-
+    
     stages {
-
         stage('Checkout') {
-            agent { label 'linux-agent' }
             steps {
                 checkout scm
             }
         }
-
+        
         stage('Build Docker Image') {
-            agent { label 'linux' }
             steps {
-                sh '''
-                docker build -t $IMAGE:$TAG .
-                '''
-            }
-        }
-
-        stage('Login & Push (AWS SM - Secure)') {
-            agent { label 'linux' }
-            steps {
-                sh '''
-                set +x
-
-                # Fetch secret from AWS
-                SECRET=$(aws secretsmanager get-secret-value \
-                    --secret-id dockerhub-creds \
-                    --query SecretString \
-                    --output text)
-
-                # Extract Username & Password
-                DOCKER_USER=$(echo $SECRET | jq -r .Username)
-                DOCKER_PASS=$(echo $SECRET | jq -r .Password)
-
-                # Docker login (secure)
-                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-
-                # Push image
-                docker push $IMAGE:$TAG
-
-                # Cleanup
-                unset SECRET
-                unset DOCKER_USER
-                unset DOCKER_PASS
-                '''
-            }
-        }
-
-        stage('Deploy to Server') {
-            agent { label 'linux' }
-            steps {
-                sshagent(['ssh-new-key']) {
+                script {
                     sh '''
-ssh -o StrictHostKeyChecking=no ubuntu@13.126.58.170 << 'EOF'
-docker pull therajatsingh/quick-task-app:${BUILD_NUMBER}
-
-docker stop task-app || true
-docker rm task-app || true
-
-docker run -d -p 80:80 --name task-app therajatsingh/quick-task-app:${BUILD_NUMBER}
-EOF
+                        docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
                     '''
                 }
             }
+        }
+        
+        stage('Login & Push (AWS SM - Secure)') {
+            steps {
+                script {
+                    sh '''
+                        set +x
+                        docker login -u $DOCKER_USER -p $DOCKER_PASSWORD
+                        set -x
+                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+                        docker push ${DOCKER_IMAGE}:latest
+                    '''
+                }
+            }
+        }
+        
+        stage('Deploy to Server') {
+            steps {
+                sshagent(['ubuntu']) {
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} << 'EOFSH'
+                            # Pull the latest image
+                            docker pull ${DOCKER_IMAGE}:${BUILD_NUMBER}
+                            
+                            # Stop and remove old container if exists
+                            docker stop quick-task-app || true
+                            docker rm quick-task-app || true
+                            
+                            # Run new container
+                            docker run -d \
+                                --name quick-task-app \
+                                -p 80:80 \
+                                -p 443:443 \
+                                ${DOCKER_IMAGE}:${BUILD_NUMBER}
+                            
+                            # Verify container is running
+                            docker ps | grep quick-task-app || (echo "Container failed to start" && exit 1)
+                        EOFSH
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "Pipeline executed successfully!"
+            echo "Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+            echo "Deployed to: ${DEPLOY_USER}@${DEPLOY_SERVER}"
+        }
+        failure {
+            echo "Pipeline failed! Check logs above for details"
+        }
+        always {
+            cleanWs()
         }
     }
 }
