@@ -11,49 +11,34 @@ pipeline {
         stage('Checkout') {
             agent { label 'linux-agent' }
             steps {
-                checkout scm 
+                checkout scm
             }
         }
 
         stage('Build Docker Image') {
-            agent { label 'docker-agent' }
+            agent { label 'docker-agent2' }   // 👈 IMPORTANT
             steps {
-                sh '''
-                docker build -t $IMAGE:$TAG .
-                '''
+                sh 'docker build -t $IMAGE:$TAG .'
             }
         }
 
-        stage('Login & Push') {
-            agent { label 'docker-agent' }
+        stage('Push Image') {
+            agent { label 'docker-agent2' }   // 👈 IMPORTANT
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'docker-creds',
-                    usernameVariable: 'Username',
-                    passwordVariable: 'Password'
-                )]) {
-                    sh '''
-                    echo $Password | docker login -u $Username --password-stdin
-                    docker push $IMAGE:$TAG
-                    '''
-                }
+                sh 'docker push $IMAGE:$TAG'
             }
         }
 
-        stage('Deploy to Server') {
+        stage('Deploy') {
             agent { label 'linux-agent' }
             steps {
                 sshagent(['server-ssh-key']) {
                     sh '''
-                    ssh -o StrictHostKeyChecking=no ubuntu@13.126.58.170 << EOF
-
+                    ssh ubuntu@13.126.58.170 << EOF
                     docker pull $IMAGE:$TAG
-
                     docker stop task-app || true
                     docker rm task-app || true
-
                     docker run -d -p 80:80 --name task-app $IMAGE:$TAG
-
                     EOF
                     '''
                 }
