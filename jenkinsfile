@@ -1,0 +1,56 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE = "yourdockerhubusername/quick-task-app"
+        TAG = "${BUILD_NUMBER}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                git 'https://github.com/your-repo.git'
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                sh 'docker build -t $IMAGE:$TAG .'
+            }
+        }
+
+        stage('Login DockerHub') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'docker-creds',
+                    usernameVariable: 'USER',
+                    passwordVariable: 'PASS'
+                )]) {
+                    sh 'echo $PASS | docker login -u $USER --password-stdin'
+                }
+            }
+        }
+
+        stage('Push Image') {
+            steps {
+                sh 'docker push $IMAGE:$TAG'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sshagent(['server-ssh-key']) {
+                    sh """
+                    ssh ubuntu@your-server-ip << EOF
+                    docker pull $IMAGE:$TAG
+                    docker stop task-app || true
+                    docker rm task-app || true
+                    docker run -d -p 80:80 --name task-app $IMAGE:$TAG
+                    EOF
+                    """
+                }
+            }
+        }
+    }
+}
