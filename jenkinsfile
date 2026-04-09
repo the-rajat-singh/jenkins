@@ -58,7 +58,7 @@ pipeline {
         stage('Deploy to Server') {
             agent { label 'linux' }
             steps {
-                sshagent(['server-ssh-key']) {
+                sshagent(['ssh-new-key']) {
                     sh '''
                     ssh -o StrictHostKeyChecking=no ubuntu@13.126.58.170 << EOF
 
