@@ -1,54 +1,61 @@
 pipeline {
-    agent any
+    agent none
 
     environment {
-        IMAGE = "yourdockerhubusername/quick-task-app"
+        IMAGE = "therajatsingh/quick-task-app"
         TAG = "${BUILD_NUMBER}"
     }
 
     stages {
 
         stage('Checkout') {
+            agent { label 'linux-agent' }
             steps {
-                git 'https://github.com/your-repo.git'
+                git 'https://github.com/the-rajat-singh/jenkins.git'
             }
         }
 
-        stage('Build Image') {
+        stage('Build Docker Image') {
+            agent { label 'docker-agent' }
             steps {
-                sh 'docker build -t $IMAGE:$TAG .'
+                sh '''
+                docker build -t $IMAGE:$TAG .
+                '''
             }
         }
 
-        stage('Login DockerHub') {
+        stage('Login & Push') {
+            agent { label 'docker-agent' }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'docker-creds',
-                    usernameVariable: 'USER',
-                    passwordVariable: 'PASS'
+                    usernameVariable: 'Username',
+                    passwordVariable: 'Password'
                 )]) {
-                    sh 'echo $PASS | docker login -u $USER --password-stdin'
+                    sh '''
+                    echo $Password | docker login -u $Username --password-stdin
+                    docker push $IMAGE:$TAG
+                    '''
                 }
             }
         }
 
-        stage('Push Image') {
-            steps {
-                sh 'docker push $IMAGE:$TAG'
-            }
-        }
-
-        stage('Deploy') {
+        stage('Deploy to Server') {
+            agent { label 'linux-agent' }
             steps {
                 sshagent(['server-ssh-key']) {
-                    sh """
-                    ssh ubuntu@your-server-ip << EOF
+                    sh '''
+                    ssh -o StrictHostKeyChecking=no ubuntu@13.126.58.170 << EOF
+
                     docker pull $IMAGE:$TAG
+
                     docker stop task-app || true
                     docker rm task-app || true
+
                     docker run -d -p 80:80 --name task-app $IMAGE:$TAG
+
                     EOF
-                    """
+                    '''
                 }
             }
         }
