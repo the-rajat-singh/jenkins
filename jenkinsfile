@@ -4,7 +4,7 @@ pipeline {
     environment {
         IMAGE = "therajatsingh/quick-task-app"
         TAG = "${BUILD_NUMBER}"
-        AWS_DEFAULT_REGION = "ap-south-1"   // change if needed
+        AWS_DEFAULT_REGION = "ap-south-1"
     }
 
     stages {
@@ -25,26 +25,49 @@ pipeline {
             }
         }
 
-        stage('Login & Push (AWS Secrets Manager)') {
+        stage('Login & Push (AWS SM + Masked)') {
             agent { label 'linux' }
             steps {
-                sh '''
-                # Fetch secret JSON
-                SECRET=$(aws secretsmanager get-secret-value \
-                    --secret-id dockerhub-creds \
-                    --query SecretString \
-                    --output text)
+                script {
 
-                # Extract Username & Password
-                DOCKER_USER=$(echo $SECRET | jq -r .Username)
-                DOCKER_PASS=$(echo $SECRET | jq -r .Password)
+                    // 🔐 Fetch secret securely
+                    def secret = sh(
+                        script: '''
+                        aws secretsmanager get-secret-value \
+                        --secret-id dockerhub-creds \
+                        --query SecretString \
+                        --output text
+                        ''',
+                        returnStdout: true
+                    ).trim()
 
-                # Login securely
-                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                    // 🔍 Extract values
+                    def DOCKER_USER = sh(
+                        script: "echo '${secret}' | jq -r .Username",
+                        returnStdout: true
+                    ).trim()
 
-                # Push image
-                docker push $IMAGE:$TAG
-                '''
+                    def DOCKER_PASS = sh(
+                        script: "echo '${secret}' | jq -r .Password",
+                        returnStdout: true
+                    ).trim()
+
+                    // 🛡️ Mask password in logs
+                    wrap([$class: 'MaskPasswordsBuildWrapper',
+                        varPasswordPairs: [[var: 'DOCKER_PASS', password: DOCKER_PASS]]
+                    ]) {
+
+                        sh """
+                        set +x   # 🔥 disable command echo
+
+                        echo \$DOCKER_PASS | docker login -u ${DOCKER_USER} --password-stdin
+
+                        docker push ${IMAGE}:${TAG}
+
+                        set -x
+                        """
+                    }
+                }
             }
         }
 
@@ -53,6 +76,8 @@ pipeline {
             steps {
                 sshagent(['server-ssh-key']) {
                     sh '''
+                    set +x
+
                     ssh -o StrictHostKeyChecking=no ubuntu@13.126.58.170 << EOF
 
                     docker pull $IMAGE:$TAG
