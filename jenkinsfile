@@ -25,49 +25,33 @@ pipeline {
             }
         }
 
-        stage('Login & Push (AWS SM + Masked)') {
+        stage('Login & Push (AWS SM - Secure)') {
             agent { label 'linux' }
             steps {
-                script {
+                sh '''
+                set +x
 
-                    // 🔐 Fetch secret securely
-                    def secret = sh(
-                        script: '''
-                        aws secretsmanager get-secret-value \
-                        --secret-id dockerhub-creds \
-                        --query SecretString \
-                        --output text
-                        ''',
-                        returnStdout: true
-                    ).trim()
+                # Fetch secret from AWS
+                SECRET=$(aws secretsmanager get-secret-value \
+                    --secret-id dockerhub-creds \
+                    --query SecretString \
+                    --output text)
 
-                    // 🔍 Extract values
-                    def DOCKER_USER = sh(
-                        script: "echo '${secret}' | jq -r .Username",
-                        returnStdout: true
-                    ).trim()
+                # Extract values
+                DOCKER_USER=$(echo $SECRET | jq -r .Username)
+                DOCKER_PASS=$(echo $SECRET | jq -r .Password)
 
-                    def DOCKER_PASS = sh(
-                        script: "echo '${secret}' | jq -r .Password",
-                        returnStdout: true
-                    ).trim()
+                # Login securely (password not printed)
+                echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
 
-                    // 🛡️ Mask password in logs
-                    wrap([$class: 'MaskPasswordsBuildWrapper',
-                        varPasswordPairs: [[var: 'DOCKER_PASS', password: DOCKER_PASS]]
-                    ]) {
+                # Push image
+                docker push $IMAGE:$TAG
 
-                        sh """
-                        set +x   # 🔥 disable command echo
-
-                        echo \$DOCKER_PASS | docker login -u ${DOCKER_USER} --password-stdin
-
-                        docker push ${IMAGE}:${TAG}
-
-                        set -x
-                        """
-                    }
-                }
+                # Cleanup sensitive variables
+                unset DOCKER_PASS
+                unset SECRET
+                unset DOCKER_USER
+                '''
             }
         }
 
@@ -76,8 +60,6 @@ pipeline {
             steps {
                 sshagent(['server-ssh-key']) {
                     sh '''
-                    set +x
-
                     ssh -o StrictHostKeyChecking=no ubuntu@13.126.58.170 << EOF
 
                     docker pull $IMAGE:$TAG
