@@ -11,7 +11,7 @@ pipeline {
         stage('Checkout') {
             agent { label 'linux-agent' }
             steps {
-                git 'https://github.com/the-rajat-singh/jenkins.git'
+                checkout scm 
             }
         }
 
