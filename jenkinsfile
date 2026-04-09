@@ -1,12 +1,9 @@
-// Fixed Jenkinsfile with proper Docker image references
-
 pipeline {
     agent any
     
     environment {
         DOCKER_IMAGE = "therajatsingh/quick-task-app"
         DOCKER_REGISTRY = "docker.io"
-        AWS_REGION = "ap-south-1"
         DEPLOY_SERVER = "13.126.58.170"
         DEPLOY_USER = "ubuntu"
     }
@@ -33,11 +30,10 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        set +x
-                        docker login -u $DOCKER_USER -p $DOCKER_PASSWORD
-                        set -x
+                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
                         docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
                         docker push ${DOCKER_IMAGE}:latest
+                        docker logout
                     '''
                 }
             }
@@ -48,21 +44,14 @@ pipeline {
                 sshagent(['ubuntu']) {
                     sh '''
                         ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} << 'EOFSH'
-                            # Pull the latest image
                             docker pull ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                            
-                            # Stop and remove old container if exists
                             docker stop quick-task-app || true
                             docker rm quick-task-app || true
-                            
-                            # Run new container
                             docker run -d \
                                 --name quick-task-app \
                                 -p 80:80 \
                                 -p 443:443 \
                                 ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                            
-                            # Verify container is running
                             docker ps | grep quick-task-app || (echo "Container failed to start" && exit 1)
                         EOFSH
                     '''
@@ -73,12 +62,12 @@ pipeline {
     
     post {
         success {
-            echo "Pipeline executed successfully!"
+            echo "✅ Pipeline executed successfully!"
             echo "Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}"
             echo "Deployed to: ${DEPLOY_USER}@${DEPLOY_SERVER}"
         }
         failure {
-            echo "Pipeline failed! Check logs above for details"
+            echo "❌ Pipeline failed! Check logs above for details"
         }
         always {
             cleanWs()
