@@ -31,7 +31,7 @@ pipeline {
                 sh '''
                 # Fetch secret JSON
                 SECRET=$(aws secretsmanager get-secret-value \
-                    --secret-id docker-creds \
+                    --secret-id dockerhub-creds \
                     --query SecretString \
                     --output text)
 
